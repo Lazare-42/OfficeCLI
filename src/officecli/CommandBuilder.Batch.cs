@@ -189,7 +189,7 @@ static partial class CommandBuilder
                 // skipped on purpose — '-' is not a path.)
                 if (inputFile.Name == "-")
                 {
-                    jsonText = StripBom(Console.In.ReadToEnd());
+                    jsonText = ReadBatchStdIn();
                 }
                 else
                 {
@@ -208,7 +208,7 @@ static partial class CommandBuilder
                 // System.Text.Json.Parse with "'﻿' is an invalid start of
                 // a value" while `batch --input utf8bom.json` succeeded —
                 // splitting the contract on the input source.
-                jsonText = StripBom(Console.In.ReadToEnd());
+                jsonText = ReadBatchStdIn();
             }
 
             // Pre-validate: check for unknown JSON fields before deserializing
@@ -445,6 +445,36 @@ static partial class CommandBuilder
         }, json); });
 
         return batchCommand;
+    }
+
+    /// <summary>
+    /// Read the batch JSON payload from stdin — unless this process is serving
+    /// MCP, in which case refuse.
+    ///
+    /// Under MCP, stdin is not a payload channel: it IS the JSON-RPC transport,
+    /// a pipe the client holds open for the whole session. ReadToEnd on it waits
+    /// for an EOF that never arrives, and since McpServer invokes commands inline
+    /// on its single reader loop, that one call hangs the ENTIRE server — every
+    /// later request queues behind it, unanswered, until the process is
+    /// restarted. That is not hypothetical: it is how the officecli-http bridge
+    /// went dark for two days on a single `batch` with no --commands/--input.
+    /// Fail fast instead, naming the two flags that do work.
+    ///
+    /// McpServer.RunCliRaw also points Console.In at TextReader.Null for each
+    /// invoke, which independently defuses this. Both exist on purpose: that one
+    /// keys off the reader, this one keys off the mode. A handler that reaches
+    /// stdin by opening the standard input handle directly — rather than through
+    /// Console.In — would sail past the redirect and still deadlock; this guard
+    /// holds regardless of how the read is spelled.
+    /// </summary>
+    private static string ReadBatchStdIn()
+    {
+        if (McpServer.InMcpMode)
+            throw new ArgumentException(
+                "batch: cannot read commands from stdin under MCP — stdin is the JSON-RPC "
+                + "transport, not a payload channel. Pass the JSON array via --commands "
+                + "'<json>' or --input <file> instead.");
+        return StripBom(Console.In.ReadToEnd());
     }
 
     // UTF-8 BOM trim. File.ReadAllText handles this implicitly via

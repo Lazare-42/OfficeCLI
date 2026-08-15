@@ -184,13 +184,24 @@ public static class MermaidImageRenderer
 
             using var p = Process.Start(psi)
                 ?? throw new InvalidOperationException("failed to start mmdc.");
-            var err = p.StandardError.ReadToEnd();
-            var outp = p.StandardOutput.ReadToEnd();
+            // Drain both pipes concurrently, and start draining BEFORE waiting.
+            // Reading them one after the other deadlocks: while this blocks on
+            // stderr, mmdc (puppeteer is chatty) fills the ~64K stdout pipe
+            // buffer, blocks writing, and never exits — so the WaitForExit
+            // timeout below is never even reached, and the CLI hangs forever
+            // instead of for 120s.
+            var errTask = p.StandardError.ReadToEndAsync();
+            var outTask = p.StandardOutput.ReadToEndAsync();
             if (!p.WaitForExit(120_000))
             {
                 try { p.Kill(true); } catch { /* best effort */ }
                 throw new InvalidOperationException("mmdc timed out after 120s.");
             }
+            // Exit closes both pipes, so these are already complete or about to
+            // be; the bound is belt-and-braces so a stuck reader cannot hang us
+            // either, having just established the child is gone.
+            var err = errTask.Wait(5_000) ? errTask.Result : "";
+            var outp = outTask.Wait(5_000) ? outTask.Result : "";
             if (p.ExitCode != 0 || !File.Exists(outPath))
             {
                 var msg = $"{err}{outp}".Trim();
