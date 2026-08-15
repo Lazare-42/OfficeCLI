@@ -1,24 +1,43 @@
 {
-  description = "OfficeCLI — Office suite CLI for AI agents (docx/xlsx/pptx). Wraps the upstream prebuilt release binary.";
+  description = "OfficeCLI — Office suite CLI for AI agents (docx/xlsx/pptx). Wraps our patched prebuilt release binary.";
 
-  # NOTE: this fork (Lazare-42/OfficeCLI) cuts no releases of its own, so the
-  # flake fetches the UPSTREAM iOfficeAI release binary. It is NOT built from
-  # this repo's .NET source (that would need a dotnet-sdk_10 + nuget-deps flake —
-  # a future migration if/when we patch the fork). "Bumping" officecli = edit
-  # `version` + `sha256` below (from the release SHA256SUMS), commit, then
-  # `nix flake update officecli` in nixos-config. git+file:// builds from the
-  # COMMITTED state, so uncommitted edits here are ignored.
+  # NOTE: this flake fetches a PREBUILT release binary; it is NOT built from
+  # this repo's .NET source (that would need a dotnet-sdk_10 + nuget-deps flake
+  # — still the eventual migration). It used to fetch UPSTREAM's iOfficeAI
+  # asset, but the fork now carries patches upstream has not taken, so it
+  # fetches OUR OWN release instead — see `owner` below.
+  #
+  # Cutting a patched build (the whole loop, because getting it wrong ships a
+  # silent no-op deploy):
+  #   1. commit the source change here
+  #   2. dotnet publish -c Release -r linux-x64   (self-contained single-file)
+  #   3. gh release create v<version> --repo Lazare-42/OfficeCLI <binary>
+  #      with the asset named exactly `officecli-linux-x64`
+  #   4. edit `version` + `sha256` below to match, commit
+  #   5. `nix flake update officecli` in nixos-config, then rebuild
+  # Steps 1-2 alone change NOTHING on the host: git+file:// builds from the
+  # COMMITTED state, and the binary still comes from the release asset, so a
+  # source commit without a matching release is invisible to the deploy.
+  #
+  # The release repo must stay PUBLIC: nixos-rebuild fetches as the root
+  # nix-daemon, which holds no GitHub credentials, so a private asset 404s at
+  # deploy time rather than at eval time.
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
   outputs = { self, nixpkgs }:
     let
-      version = "1.0.129";
+      # Our patched build of upstream 1.0.129. Carries the MCP fixes in
+      # 9ae8d2e (stdin-under-MCP deadlock, per-command timeout, mmdc pipe
+      # drain); upstream v1.0.144 still ships the first two, so do NOT
+      # "upgrade" this to a plain upstream tag without re-porting them.
+      version = "1.0.129-mcpfix.1";
+      owner = "Lazare-42";
 
-      # Per-system release asset name + sha256 (from the release SHA256SUMS).
+      # Per-system release asset name + sha256.
       assets = {
         x86_64-linux = {
           name = "officecli-linux-x64";
-          sha256 = "1e44357f86b4c664b2e49d18b3b8e2d17947fa4d45b47a1d725a58c65db34159";
+          sha256 = "866f5cb72c9315db50426603635c82aff3747f0a7bc18e6d03a58aefea77c6f6";
         };
       };
 
@@ -40,7 +59,7 @@
             pname = "officecli-bundle";
             inherit version;
             src = pkgs.fetchurl {
-              url = "https://github.com/iOfficeAI/OfficeCLI/releases/download/v${version}/${asset.name}";
+              url = "https://github.com/${owner}/OfficeCLI/releases/download/v${version}/${asset.name}";
               inherit (asset) sha256;
             };
             dontUnpack = true;
