@@ -1,5 +1,5 @@
 {
-  description = "OfficeCLI — Office suite CLI for AI agents (docx/xlsx/pptx). Wraps our patched prebuilt release binary.";
+  description = "OfficeCLI — Office suite CLI for AI agents (docx/xlsx/pptx). Wraps our patched prebuilt release binary. (wealthfolio branch: dedicated lineage, see note below.)";
 
   # NOTE: this flake fetches a PREBUILT release binary; it is NOT built from
   # this repo's .NET source (that would need a dotnet-sdk_10 + nuget-deps flake
@@ -22,6 +22,23 @@
   # The release repo must stay PUBLIC: nixos-rebuild fetches as the root
   # nix-daemon, which holds no GitHub credentials, so a private asset 404s at
   # deploy time rather than at eval time.
+  #
+  # --- wealthfolio branch note ---
+  # This branch exists so nixos-config can wire a package for wealthfolio's
+  # officecli-http bridge (modules/services/officecli-http.nix) WITHOUT
+  # touching the shared officecli package that modules/packages.nix +
+  # mcpproxy.nix (every Claude Code session on the box) depend on. At this
+  # checkpoint it is a pure repackaging with ZERO functional change: the
+  # v1.0.129-wealthfolio.1 release re-publishes the IDENTICAL
+  # officecli-linux-x64 asset from v1.0.129-mcpfix.1 (same sha256 below), just
+  # under a distinct tag targeting this branch. `overlays.default` exposes the
+  # attribute as `officecli-wealthfolio`, NOT `officecli` — if it reused the
+  # `officecli` name, applying both this and the `main`-branch overlay in
+  # nixos-config's `nixpkgs.overlays` list would have the later one silently
+  # clobber `pkgs.officecli` for the shared/general path. Future
+  # wealthfolio-specific efficiency changes land as commits on this branch,
+  # each cut through the same release procedure below under a new
+  # `1.0.129-wealthfolio.N` (or higher) tag.
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
   outputs = { self, nixpkgs }:
@@ -30,7 +47,7 @@
       # 9ae8d2e (stdin-under-MCP deadlock, per-command timeout, mmdc pipe
       # drain); upstream v1.0.144 still ships the first two, so do NOT
       # "upgrade" this to a plain upstream tag without re-porting them.
-      version = "1.0.129-mcpfix.1";
+      version = "1.0.129-wealthfolio.1";
       owner = "Lazare-42";
 
       # Per-system release asset name + sha256.
@@ -88,7 +105,8 @@
         };
     in
     {
-      overlays.default = final: _prev: { officecli = mkOfficecli final; };
+      # NOT `officecli` — see the wealthfolio-branch note above.
+      overlays.default = final: _prev: { officecli-wealthfolio = mkOfficecli final; };
 
       packages.x86_64-linux.default =
         mkOfficecli (import nixpkgs { system = "x86_64-linux"; });
